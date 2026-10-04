@@ -77,6 +77,18 @@ class HistoryStore:
             if f.endswith(".jsonl")
         ]
 
+    def all_messages(self, limit_per_chat: int = 200) -> List[Dict]:
+        """Сообщения из всех чатов — для глобального профиля стиля."""
+        out: List[Dict] = []
+        for cid in self.chats():
+            out.extend(self.load(cid)[-limit_per_chat:])
+        return out
+
+    def export(self, chat_id: str) -> List[Dict]:
+        """История чата для выгрузки: [{ts, sender, text}, ...]."""
+        return [{"ts": m.get("ts"), "sender": m.get("sender"), "text": m.get("text")}
+                for m in self.load(chat_id)]
+
 
 def transcript(messages: List[Dict]) -> str:
     """История → текст для промпта."""
@@ -85,3 +97,12 @@ def transcript(messages: List[Dict]) -> str:
         who = "Я" if m.get("sender") == "me" else "Собеседник"
         lines.append(f"{who}: {m.get('text', '')}")
     return "\n".join(lines)
+
+
+def strip_last_duplicate(messages: List[Dict], incoming: str) -> List[Dict]:
+    """Убирает последнее сообщение, если это тот же incoming от собеседника
+    (иначе оно попадает в промпт дважды — и как контекст, и как «последнее»)."""
+    if messages and messages[-1].get("sender") == "peer" and \
+            messages[-1].get("text") == incoming:
+        return messages[:-1]
+    return messages

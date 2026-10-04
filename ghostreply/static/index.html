@@ -59,6 +59,11 @@
   .m .copy{position:absolute;top:4px;right:6px;opacity:0;font-size:11px;cursor:pointer;
     background:#0008;padding:2px 6px;border-radius:6px}
   .m:hover .copy{opacity:.8}
+  .m.draft{border:1px dashed var(--warn);background:#2a2416}
+  .m.draft .badge{position:absolute;top:-9px;left:8px;font-size:10px;background:var(--warn);
+    color:#222;padding:1px 7px;border-radius:99px;font-weight:600}
+  .draft-act{display:flex;gap:6px;margin-top:7px}
+  .draft-act button{padding:4px 10px;font-size:12.5px}
   .empty{color:var(--mut);text-align:center;margin:auto;padding:30px}
   .composer{display:flex;gap:8px;padding:12px 16px;background:var(--panel);
     border-top:1px solid var(--line);align-items:flex-end}
@@ -139,6 +144,7 @@
         <option value="draft">✏️ черновик</option>
       </select>
       <button class="ghost small" onclick="loadStyle()">🧬 Стиль</button>
+      <button class="ghost small" onclick="exportChat()" title="Выгрузить историю JSON">⬇️</button>
       <button class="ghost small" onclick="clearChat()">🗑</button>
     </div>
 
@@ -274,10 +280,15 @@ async function status(){
 }
 
 /* ---------- чаты ---------- */
-async function loadChats(){
+async function loadChats(silent){
   const d = await api('GET','/chats');
+  const sig = d.chats.map(c=>c.chat_id+c.count+c.last_ts+c.mine).join('\u0001');
+  if(silent && sig === lastChatsSig) return;   // ничего не изменилось — не трогаем DOM
+  lastChatsSig = sig;
   chats = {}; d.chats.forEach(c=>chats[c.chat_id]=c);
-  const box = $('chatlist'); box.innerHTML='';
+  const box = $('chatlist');
+  const keepScroll = box.scrollTop;
+  box.innerHTML='';
   const ids = Object.keys(chats).sort((a,b)=>
     (chats[b].last_ts||0)-(chats[a].last_ts||0));
   if(!ids.length){
@@ -288,13 +299,16 @@ async function loadChats(){
     const el = document.createElement('div');
     el.className = 'chat' + (id===cur?' sel':'');
     el.innerHTML = `<div class="id"></div><div class="prev"></div>
-      <div class="meta">${c.count} сообщ. · ${c.mine} твоих</div>`;
+      <div class="meta"></div>`;
     el.querySelector('.id').textContent = id;
     el.querySelector('.prev').textContent = c.last_text || '';
+    el.querySelector('.meta').textContent = `${c.count} сообщ. · ${c.mine} твоих`;
     el.onclick = ()=>select(id);
     box.appendChild(el);
   });
+  box.scrollTop = keepScroll;
 }
+let lastChatsSig = null;
 
 function addChat(){
   const id = $('newChatId').value.trim();
@@ -305,19 +319,32 @@ function addChat(){
 
 async function select(id){
   cur = id;
+  lastMsgKey = null;
   $('chatTitle').textContent = '💬 ' + id;
   await loadChats(); renderMsgs([]);
   loadMsgs(); loadStyle();
 }
 
-async function loadMsgs(){
+async function loadMsgs(silent){
   if(!cur) return;
-  const d = await api('GET','/chat/'+encodeURIComponent(cur));
-  renderMsgs(d.messages);
+  try{
+    const d = await api('GET','/chat/'+encodeURIComponent(cur));
+    renderMsgs(d.messages, silent);
+  }catch(e){ if(!silent) toast(e.message, true); }
 }
 
-function renderMsgs(msgs){
-  const box = $('msgs'); box.innerHTML='';
+let lastMsgKey = null;
+
+function renderMsgs(msgs, silent){
+  const box = $('msgs');
+  // черновик висит — не перерисовываем молча, иначе он пропадёт
+  if(silent && $('draftBubble')) return;
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  // не перерисовываем без изменений — чтобы не дёргать скролл
+  const key = msgs.map(m=>m.sender+m.text).join('\u0001');
+  if(silent && key === lastMsgKey && box.childElementCount) return;
+  lastMsgKey = key;
+  box.innerHTML='';
   if(!cur){
     box.innerHTML = '<div class="empty">Чат не выбран</div>'; return;
   }
@@ -325,19 +352,58 @@ function renderMsgs(msgs){
     box.innerHTML = '<div class="empty">Пусто. Напиши первое сообщение снизу<br>или импортируй историю.</div>';
     return;
   }
-  msgs.forEach(m=>{
-    const el = document.createElement('div');
-    el.className = 'm ' + (m.sender==='me'?'me':'peer');
-    const time = m.ts ? new Date(m.ts*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
-    el.innerHTML = '<span class="copy" title="Копировать">⧉</span><span class="tx"></span>' +
-                   (time?`<span class="t">${time}</span>`:'');
-    el.querySelector('.tx').textContent = m.text;
-    el.querySelector('.copy').onclick = ()=>{
-      navigator.clipboard.writeText(m.text); toast('Скопировано');
+  msgs.forEach(m=>box.appendChild(bubble(m)));
+  if(atBottom || !silent) box.scrollTop = box.scrollHeight;
+}
+
+function bubble(m){
+  const el = document.createElement('div');
+  const draft = m.sender === 'draft';
+  el.className = 'm ' + (draft ? 'peer draft' : m.sender==='me'?'me':'peer');
+  const time = m.ts ? new Date(m.ts*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+  el.innerHTML = (draft ? '<span class="badge">черновик</span>' : '') +
+                 '<span class="copy" title="Копировать">⧉</span><span class="tx"></span>' +
+                 (time?`<span class="t">${time}</span>`:'');
+  el.querySelector('.tx').textContent = m.text;
+  el.querySelector('.copy').onclick = ()=>{
+    navigator.clipboard.writeText(m.text); toast('Скопировано');
+  };
+  if(draft){
+    const act = document.createElement('div');
+    act.className = 'draft-act';
+    const send = document.createElement('button');
+    send.className = 'small'; send.textContent = 'Отправить';
+    send.onclick = async ()=>{
+      send.disabled = true;
+      try{
+        await api('POST','/message',{chat_id:cur, text:m.text, sender:'me'});
+        removeDraft(); toast('Отправлено ✔');
+        loadMsgs(true); loadChats();
+      }catch(e){ toast(e.message, true); send.disabled=false; }
     };
-    box.appendChild(el);
-  });
+    const skip = document.createElement('button');
+    skip.className = 'small ghost'; skip.textContent = 'Пропустить';
+    skip.onclick = ()=>{ removeDraft(); toast('Черновик отклонён'); };
+    act.appendChild(send); act.appendChild(skip);
+    el.appendChild(act);
+  }
+  return el;
+}
+
+let draftText = null;
+function showDraft(text){
+  removeDraft();
+  draftText = text;
+  const box = $('msgs');
+  const el = bubble({sender:'draft', text, ts: Date.now()/1000});
+  el.id = 'draftBubble';
+  box.appendChild(el);
   box.scrollTop = box.scrollHeight;
+}
+function removeDraft(){
+  const d = $('draftBubble');
+  if(d) d.remove();
+  draftText = null;
 }
 
 /* ---------- отправка ---------- */
@@ -350,13 +416,14 @@ async function send(){
   if(!text){ toast('Напиши сообщение', true); return; }
   if(!cur){ toast('Сначала выбери или создай чат', true); return; }
   $('inp').value='';
+  removeDraft();
   const btn = $('sendBtn');
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
   try{
     const d = await api('POST','/message',{chat_id:cur, text, sender:'peer'});
     await loadMsgs(); await loadChats();
     if(d.mode==='draft' && d.reply){
-      toast('Черновик: ' + d.reply);
+      showDraft(d.reply);   // черновик прямо в чате — с кнопками «Отправить»/«Пропустить»
     }
   }catch(e){ toast(e.message, true); }
   finally{ btn.disabled=false; btn.textContent='Ответить'; $('inp').focus(); }
@@ -417,6 +484,20 @@ async function doImport(){
 }
 
 /* ---------- чат / режим ---------- */
+function exportChat(){
+  if(!cur){ toast('Чат не выбран', true); return; }
+  api('GET','/chat/'+encodeURIComponent(cur)).then(d=>{
+    const blob = new Blob([JSON.stringify(d.messages, null, 2)],
+                          {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'ghostreply-' + cur.replace(/[^\w.-]+/g,'_') + '.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast('История выгружена');
+  }).catch(e=>toast(e.message, true));
+}
+
 async function clearChat(){
   if(!cur) return;
   if(!confirm('Удалить историю чата «'+cur+'»?')) return;
@@ -482,18 +563,26 @@ async function loadConn(){
 function setConnState(name, c){
   const el = $(name === 'vk' ? 'vkState' : 'tgState');
   const pill = $(name === 'vk' ? 'vkPill' : 'tgPill');
+  const btn = $(name === 'vk' ? 'vkBtn' : 'tgBtn');
   const label = name === 'vk' ? 'VK' : 'Telegram';
   if(c.running){
     el.className = 'pill on'; el.textContent = 'подключён';
     pill.className = 'pill on'; pill.textContent = label + ': онлайн';
+    btn.textContent = 'Отключить';
+    btn.dataset.act = 'disconnect';
+    btn.className = 'small ghost';
   } else if(c.configured){
     el.className = 'pill off';
     el.textContent = c.error ? 'ошибка' : 'остановлен';
     pill.className = 'pill off';
     pill.textContent = label + (c.error ? ': ошибка' : ': оффлайн');
+    btn.textContent = 'Подключить';
+    btn.dataset.act = 'connect';
   } else {
     el.className = 'pill'; el.textContent = 'не подключён';
     pill.className = 'pill'; pill.textContent = label + ': не подключён';
+    btn.textContent = 'Подключить';
+    btn.dataset.act = 'connect';
   }
 }
 
@@ -520,17 +609,17 @@ function renderEvents(events){
 
 async function connect(name){
   const isVk = name === 'vk';
-  const tokenEl = $(isVk ? 'vkToken' : 'tgToken');
   const btn = $(isVk ? 'vkBtn' : 'tgBtn');
+  if(btn.dataset.act === 'disconnect'){ return disconnect(name); }
+
+  const tokenEl = $(isVk ? 'vkToken' : 'tgToken');
   const token = tokenEl.value.trim();
   if(!token || token === '••••••••'){
-    if(token === '••••••••'){ // уже сохранён — просто переподключаем
-      try{
-        const d = await api('GET','/connections');
-        if(d.connections[name] && d.connections[name].configured){ return loadConn(); }
-      }catch(e){}
+    if(token === '••••••••'){ // токен уже сохранён — просто (пере)подключаем
+      toast('Токен сохранён. Нажми ещё раз для переподключения…', false);
+    } else {
+      toast('Вставь токен бота', true); return;
     }
-    toast('Вставь токен бота', true); return;
   }
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
   try{
@@ -543,7 +632,8 @@ async function connect(name){
     tokenEl.value = '••••••••';
     await loadConn();
   }catch(e){ toast(e.message, true); }
-  finally{ btn.disabled = false; btn.textContent = 'Подключить'; }
+  finally{ btn.disabled = false; }
+  await loadConn();
 }
 
 async function disconnect(name){
@@ -555,9 +645,39 @@ async function disconnect(name){
 }
 
 /* ---------- init ---------- */
+async function refreshFeed(){
+  // тихое обновление: новые сообщения из VK/Telegram подтягиваются сами
+  try{
+    const chatsBefore = Object.keys(chats).length;
+    const curBefore = cur && chats[cur] ? chats[cur].count + ':' + chats[cur].last_ts : '';
+    await loadChats(true);
+    const curAfter = cur && chats[cur] ? chats[cur].count + ':' + chats[cur].last_ts : '';
+    if(cur && (curBefore !== curAfter || chatsBefore !== Object.keys(chats).length)){
+      await loadMsgs(true);
+      loadStyle();
+    }
+    if($('connModal').classList.contains('show')) await loadConn();
+    updatePills();
+  }catch(e){}
+}
+
+function updatePills(){
+  // статусы мессенджеров в шапке
+  Promise.all([api('GET','/connections')]).then(([d])=>{
+    const c = d.connections || {};
+    setConnState('vk', c.vk || {});
+    setConnState('telegram', c.telegram || {});
+    mode = d.mode || mode;
+    const sel = $('modeSel');
+    if(sel && sel.value !== mode) sel.value = mode;
+  }).catch(()=>{});
+}
+
 (async function init(){
   status(); setInterval(status, 5000);
   loadConn();
+  updatePills();
+  setInterval(refreshFeed, 3000);   // живая лента
   connTimer = setInterval(()=>{ if($('connModal').classList.contains('show')) loadConn(); }, 3000);
   try{
     const d = await api('GET','/settings');

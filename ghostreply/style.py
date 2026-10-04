@@ -12,6 +12,7 @@ EMOJI_RE = re.compile(
 class StyleProfile:
     def __init__(self, messages: Optional[List[Dict]] = None):
         self.my_texts: List[str] = []
+        self.source_messages: List[Dict] = list(messages or [])
         self.avg_len = 40
         self.exclamations = 0.0     # "!" на сообщение
         self.emoji_freq = 0.0       # эмодзи на сообщение

@@ -157,8 +157,14 @@ def make_handler(cfg: Config, store: HistoryStore, engine: ReplyEngine,
             ad = adapters.get(name)
             if not ad:
                 return self._json({"error": "неизвестный мессенджер"}, 400)
-            if not token:
-                return self._json({"error": "нужен токен бота"}, 400)
+
+            saved = cfg.telegram_token if name == "telegram" else cfg.vk_token
+            if token in ("", "••••••••", "******"):
+                if not saved:
+                    return self._json({"error": "нужен токен бота"}, 400)
+                token = saved  # переподключение по уже сохранённому токену
+            if not link:
+                link = cfg.telegram_link if name == "telegram" else cfg.vk_link
 
             # проверка токена до сохранения
             try:
@@ -200,11 +206,14 @@ def make_handler(cfg: Config, store: HistoryStore, engine: ReplyEngine,
                 if not ad:
                     return self._json({"error": "неизвестный мессенджер"}, 400)
                 ad.stop()
-                if name == "telegram":
-                    cfg.telegram_token, cfg.telegram_link = "", ""
-                else:
-                    cfg.vk_token, cfg.vk_link, cfg.vk_group_id = "", "", ""
-                cfgmod.save_settings(cfg)
+                # токен храним — чтобы можно было переподключить одной кнопкой;
+                # forget=true — вычистить совсем
+                if data.get("forget"):
+                    if name == "telegram":
+                        cfg.telegram_token, cfg.telegram_link = "", ""
+                    else:
+                        cfg.vk_token, cfg.vk_link, cfg.vk_group_id = "", "", ""
+                    cfgmod.save_settings(cfg)
                 return self._json({"ok": True, "running": False})
 
             if path == "/settings":

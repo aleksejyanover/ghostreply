@@ -1,28 +1,44 @@
 """Генерация ответа: LLM (OpenAI-совместимый API) + локальный фолбэк без сети."""
 
 import json
+import re
+import time
 import urllib.request
 import urllib.error
 from typing import Dict, List, Optional
 
 from .config import Config
-from .history import HistoryStore, transcript
+from .history import HistoryStore, strip_last_duplicate, transcript
 from .style import StyleProfile
 
-SYSTEM_TMPL = """Ты — автозаместитель хозяина чата. Ты пишешь сообщение ОТ ЕГО ИМЕНИ собеседнику.
+
+def _clean_reply(text: str) -> str:
+    """Убирает мусор, который LLM может добавить вопреки инструкциям."""
+    text = (text or "").strip()
+    # "Я: привет" / "Бот: ..." в начале
+    text = re.sub(r"^(?:я|бот|assistant|host)\s*:\s*", "", text, flags=re.I)
+    # кавычки вокруг всего ответа
+    for pair in (('"', '"'), ("'", "'"), ("«", "»"), ("“", "”")):
+        if len(text) >= 2 and text.startswith(pair[0]) and text.endswith(pair[1]):
+            text = text[1:-1].strip()
+            break
+    return text.strip()
+
+SYSTEM_ROLE = """Ты — автозаместитель хозяина чата. Ты пишешь сообщение ОТ ЕГО ИМЕНИ собеседнику.
 Правила:
 - Полностью повторяй стиль хозяина: длина, тон, эмодзи, капс, пунктуация, обращения.
 - Не извиняйся, не представляйся, не пиши "как ИИ". Ты просто он.
 - Отвечай ровно на последнее сообщение собеседника, опираясь на контекст истории.
+- Коротко, как в переписке: 1-2 предложения, без списков и абзацев.
 - Только текст сообщения, без кавычек, без пояснений, без "Я:".
 
 Стиль хозяина:
 {style}
 
 Примеры его сообщений:
-{samples}
+{samples}"""
 
-История чата:
+USER_TMPL = """История чата:
 {transcript}
 
 Последнее сообщение собеседника: {last}
@@ -68,41 +84,68 @@ _WHEN_MARKS = ("когда", "во сколько", "какого числа", "
 
 
 class ReplyEngine:
+    # минимум своих сообщений в чате, чтобы считать профиль достаточным
+    MIN_CHAT_MESSAGES = 4
+    GLOBAL_PROFILE_TTL = 60  # сек: переоценка глобального стиля
+
     def __init__(self, cfg: Config, store: HistoryStore):
         self.cfg = cfg
         self.store = store
+        self._global_profile: Optional[StyleProfile] = None
+        self._global_ts: float = 0.0
 
     def profile(self, chat_id: str) -> StyleProfile:
-        return StyleProfile(self.store.load(chat_id))
+        """Стиль для чата: из его истории, а если мало данных — глобальный."""
+        local = StyleProfile(self.store.load(chat_id))
+        if len(local.my_texts) >= self.MIN_CHAT_MESSAGES:
+            return local
+        glob = self.global_profile()
+        if not glob.my_texts:
+            return local
+        # смешиваем своё из чата + чужие чаты (сам чат не дублируем)
+        others = [m for m in glob.source_messages
+                  if m.get("chat_id") != str(chat_id)]
+        mixed = StyleProfile(local.source_messages + others)
+        return mixed if mixed.my_texts else local
+
+    def global_profile(self) -> StyleProfile:
+        """Профиль по всем чатам — чтобы стиль был знаком и в новом чате."""
+        now = time.time()
+        if self._global_profile is None or now - self._global_ts > self.GLOBAL_PROFILE_TTL:
+            self._global_profile = StyleProfile(self.store.all_messages())
+            self._global_ts = now
+        return self._global_profile
 
     def reply(self, chat_id: str, incoming: str, history: Optional[List[Dict]] = None) -> str:
         msgs = history if history is not None else self.store.recent(chat_id, self.cfg.history_window)
-        profile = StyleProfile(msgs)
-        last = incoming
-        transcript_text = transcript(msgs[:-1] if msgs and msgs[-1].get("text") == incoming and msgs[-1].get("sender") == "peer" else msgs)
+        profile = self.profile(chat_id)
+        context = strip_last_duplicate(msgs, incoming)
 
-        prompt = SYSTEM_TMPL.format(
+        system = SYSTEM_ROLE.format(
             style="\n".join(f"- {l}" for l in profile.style_lines),
             samples="\n".join(f"- {s}" for s in profile.samples()) or "- (нет данных)",
-            transcript=transcript_text or "(пусто)",
-            last=last,
         )
-        out = self._llm(prompt)
+        user = USER_TMPL.format(
+            transcript=transcript(context) or "(пусто)",
+            last=incoming,
+        )
+        out = self._llm(system, user)
         if out:
             return self._match_style(out, profile)
         return self._local(profile, incoming)
 
     # --- LLM ---------------------------------------------------------------
 
-    def _llm(self, prompt: str) -> Optional[str]:
+    def _llm(self, system: str, user: str) -> Optional[str]:
         if not self.cfg.llm_api_key:
             return None
         url = self.cfg.llm_url.rstrip("/") + "/chat/completions"
         body = json.dumps({
             "model": self.cfg.llm_model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": user}],
             "temperature": 0.9,
-            "max_tokens": 600,
+            "max_tokens": 300,
         }).encode("utf-8")
         req = urllib.request.Request(
             url,
@@ -113,13 +156,18 @@ class ReplyEngine:
             },
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(req, timeout=self.cfg.llm_timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            text = data["choices"][0]["message"]["content"].strip()
-            return text or None
-        except (urllib.error.URLError, KeyError, IndexError, ValueError, OSError):
-            return None
+        for attempt in range(2):  # одна повторная попытка при обрыве сети
+            try:
+                with urllib.request.urlopen(req, timeout=self.cfg.llm_timeout) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                text = data["choices"][0]["message"]["content"].strip()
+                return _clean_reply(text) or None
+            except (urllib.error.URLError, KeyError, IndexError, ValueError, OSError):
+                if attempt == 0:
+                    time.sleep(1.0)
+                    continue
+                return None
+        return None
 
     # --- Фолбэк ------------------------------------------------------------
 
