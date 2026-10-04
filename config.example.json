@@ -1,0 +1,11 @@
+{
+  "http_host": "127.0.0.1",
+  "http_port": 8787,
+  "llm_url": "https://api.openai.com/v1",
+  "llm_api_key": "",
+  "llm_model": "gpt-4o-mini",
+  "mode": "auto",
+  "telegram_token": "",
+  "telegram_allowed_chats": [],
+  "history_window": 40
+}
