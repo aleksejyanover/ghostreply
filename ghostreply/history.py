@@ -21,12 +21,12 @@ class HistoryStore:
         safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in str(chat_id))
         return os.path.join(self.dir, safe + ".jsonl")
 
-    def append(self, chat_id: str, sender: str, text: str, ts: int = 0) -> None:
+    def append(self, chat_id: str, sender: str, text: str, ts: float = 0) -> None:
         rec = {
             "chat_id": str(chat_id),
             "sender": "me" if sender in ("me", "self", True) else "peer",
             "text": text,
-            "ts": int(ts or time.time()),
+            "ts": float(ts or time.time()),
         }
         with self._lock:
             with open(self._path(chat_id), "a", encoding="utf-8") as f:
@@ -61,6 +61,14 @@ class HistoryStore:
             self.append(chat_id, m.get("sender", "peer"), m["text"], m.get("ts", 0))
             count += 1
         return count
+
+    def delete(self, chat_id: str) -> bool:
+        with self._lock:
+            try:
+                os.remove(self._path(chat_id))
+                return True
+            except FileNotFoundError:
+                return False
 
     def chats(self):
         return [

@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GhostReply — пишет вместо тебя</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c2330; --line:#2a3240;
+    --txt:#e6edf3; --mut:#8b98a9; --acc:#4f8cff; --acc2:#2ea36b; --warn:#e3b341;
+    --me:#1f6feb; --peer:#21262d;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font:15px/1.45 -apple-system,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+    background:var(--bg);color:var(--txt);display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);
+    border-bottom:1px solid var(--line);flex:0 0 auto}
+  .logo{font-weight:700;font-size:17px}
+  .logo span{color:var(--acc)}
+  .pill{font-size:12px;padding:3px 9px;border-radius:99px;background:var(--panel2);
+    color:var(--mut);border:1px solid var(--line)}
+  .pill.on{color:#7ee2a8;border-color:#2ea36b66;background:#2ea36b1a}
+  .pill.off{color:#ffb4ab;border-color:#d1363666;background:#d136361a}
+  .spacer{flex:1}
+  button{background:var(--acc);border:0;color:#fff;padding:7px 14px;border-radius:8px;
+    font-size:14px;cursor:pointer}
+  button:hover{filter:brightness(1.1)}
+  button.ghost{background:var(--panel2);border:1px solid var(--line);color:var(--txt)}
+  button.small{padding:4px 10px;font-size:13px}
+  main{flex:1;display:flex;min-height:0}
+  aside{width:250px;background:var(--panel);border-right:1px solid var(--line);
+    display:flex;flex-direction:column;min-height:0}
+  .aside-head{padding:10px 12px;display:flex;gap:8px;align-items:center;
+    border-bottom:1px solid var(--line)}
+  .chatlist{overflow:auto;flex:1}
+  .chat{padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--line2,#1b2027)}
+  .chat:hover{background:var(--panel2)}
+  .chat.sel{background:#1f6feb26;box-shadow:inset 3px 0 0 var(--acc)}
+  .chat .id{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chat .prev{font-size:12.5px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
+  .chat .meta{font-size:11px;color:var(--mut);margin-top:2px}
+  .stage{flex:1;display:flex;flex-direction:column;min-width:0}
+  .stage-head{padding:10px 16px;border-bottom:1px solid var(--line);display:flex;
+    gap:10px;align-items:center;background:var(--panel)}
+  #chatTitle{font-weight:600}
+  #styleBox{max-height:170px;overflow:auto;background:var(--panel2);border:1px solid var(--line);
+    border-radius:10px;padding:10px 14px;margin:12px 16px 0;font-size:13.5px;color:#c9d4e2}
+  #styleBox b{color:var(--txt)}
+  #styleBox ul{margin:6px 0 2px;padding-left:18px}
+  #msgs{flex:1;overflow:auto;padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+  .m{max-width:72%;padding:8px 12px;border-radius:14px;white-space:pre-wrap;
+    word-break:break-word;position:relative}
+  .m.peer{background:var(--peer);border:1px solid var(--line);align-self:flex-start;
+    border-bottom-left-radius:4px}
+  .m.me{background:var(--me);align-self:flex-end;border-bottom-right-radius:4px}
+  .m .t{display:block;font-size:10.5px;opacity:.65;margin-top:4px;text-align:right}
+  .m .copy{position:absolute;top:4px;right:6px;opacity:0;font-size:11px;cursor:pointer;
+    background:#0008;padding:2px 6px;border-radius:6px}
+  .m:hover .copy{opacity:.8}
+  .empty{color:var(--mut);text-align:center;margin:auto;padding:30px}
+  .composer{display:flex;gap:8px;padding:12px 16px;background:var(--panel);
+    border-top:1px solid var(--line);align-items:flex-end}
+  textarea,select,input[type=text],input[type=password]{background:var(--panel2);
+    color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:9px 11px;
+    font:inherit;resize:none}
+  #inp{flex:1;min-height:42px;max-height:140px}
+  #modeSel{background:var(--panel2);color:var(--txt);border:1px solid var(--line);
+    border-radius:8px;padding:9px 8px}
+  .hint{font-size:12px;color:var(--mut);padding:0 16px 10px;background:var(--panel)}
+  /* модалки */
+  .overlay{position:fixed;inset:0;background:#000a;display:none;align-items:center;
+    justify-content:center;z-index:50}
+  .overlay.show{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    width:min(560px,92vw);max-height:86vh;overflow:auto;padding:18px 20px}
+  .modal h3{margin:0 0 12px}
+  .row{display:flex;gap:10px;margin-bottom:10px;align-items:center}
+  .row label{width:150px;color:var(--mut);font-size:13.5px;flex:0 0 auto}
+  .row input,.row select{flex:1;min-width:0}
+  .modal textarea{width:100%;height:180px}
+  .modal .foot{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}
+  .note{font-size:12.5px;color:var(--mut);margin-top:8px}
+  .conn-card{background:var(--panel2);border:1px solid var(--line);border-radius:12px;
+    padding:12px 14px;margin-bottom:12px}
+  .conn-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .conn-card .row label{width:130px}
+  .events{max-height:220px;overflow:auto;background:#0b0e13;border:1px solid var(--line);
+    border-radius:10px;padding:8px 10px;font-size:12.5px;font-family:ui-monospace,Menlo,monospace}
+  .ev{padding:3px 0;border-bottom:1px dashed #1b2027;display:flex;gap:8px}
+  .ev:last-child{border-bottom:0}
+  .ev .tm{color:#5b6675;flex:0 0 auto}
+  .ev .src{flex:0 0 auto;font-weight:600}
+  .ev.in .src{color:#7ee2a8} .ev.out .src{color:#6cb6ff}
+  .ev.draft .src{color:var(--warn)} .ev.error .src{color:#ff7b72}
+  .ev .txt{color:#c9d4e2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+    background:#2ea36b;color:#fff;padding:9px 16px;border-radius:10px;opacity:0;
+    transition:.25s;z-index:99;pointer-events:none}
+  #toast.show{opacity:1}
+  #toast.err{background:#d13636}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid #fff5;
+    border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  @media(max-width:760px){aside{width:170px}#styleBox{display:none}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">👻 Ghost<span>Reply</span></div>
+  <div class="pill" id="llmPill">LLM: …</div>
+  <div class="pill" id="tgPill">Telegram: …</div>
+  <div class="pill" id="vkPill">VK: …</div>
+  <div class="pill" id="apiPill">API: …</div>
+  <div class="spacer"></div>
+  <button class="ghost" onclick="show('connModal');loadConn()">🔗 Мессенджеры</button>
+  <button class="ghost" onclick="show('importModal')">📥 Импорт истории</button>
+  <button class="ghost" onclick="openSettings()">⚙️ Настройки</button>
+</header>
+
+<main>
+  <aside>
+    <div class="aside-head">
+      <input type="text" id="newChatId" placeholder="id чата"
+             style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')addChat()">
+      <button class="small" onclick="addChat()">＋</button>
+    </div>
+    <div class="chatlist" id="chatlist"></div>
+  </aside>
+
+  <section class="stage">
+    <div class="stage-head">
+      <span id="chatTitle">Чат не выбран</span>
+      <div class="spacer"></div>
+      <select id="modeSel" title="Режим ответа" onchange="setMode(this.value)">
+        <option value="auto">🤖 автоответ</option>
+        <option value="draft">✏️ черновик</option>
+      </select>
+      <button class="ghost small" onclick="loadStyle()">🧬 Стиль</button>
+      <button class="ghost small" onclick="clearChat()">🗑</button>
+    </div>
+
+    <div id="styleBox" style="display:none"></div>
+    <div id="msgs"><div class="empty">Выбери чат слева или создай новый.<br>
+      Затем «📥 Импорт истории» — и бот начнёт отвечать в твоём стиле.</div></div>
+
+    <div class="composer">
+      <textarea id="inp" placeholder="Сообщение собеседника (Enter — отправить, Shift+Enter — новая строка)"
+                onkeydown="keySend(event)"></textarea>
+      <button id="sendBtn" onclick="send()">Ответить</button>
+    </div>
+    <div class="hint">Сообщение считается входящим от собеседника — GhostReply генерирует ответ
+      по истории и стилю. В режиме «автоответ» ответ сразу пишется в чат за тебя.</div>
+  </section>
+</main>
+
+<!-- Импорт истории -->
+<div class="overlay" id="importModal">
+  <div class="modal">
+    <h3>📥 Импорт истории чата</h3>
+    <div class="row"><label>Чат</label>
+      <input type="text" id="impChat" placeholder="id чата (или выбери слева)"></div>
+    <div class="row" style="align-items:flex-start"><label>Формат строк</label>
+      <div class="note" style="margin:0">Одно сообщение в строке:<br>
+        <code>Я: привет 😎</code> или <code>Собеседник: ты где?</code><br>
+        Пустые строки игнорируются. Можно вставить и JSON
+        <code>[{"sender":"me","text":"..."}]</code>.</div></div>
+    <textarea id="impText" placeholder="Собеседник: привет, как дела?&#10;Я: куу, норм 😎 а ты?&#10;Собеседник: давай завтра в 7?"></textarea>
+    <div class="foot">
+      <button class="ghost" onclick="hide('importModal')">Отмена</button>
+      <button onclick="doImport()">Импортировать</button>
+    </div>
+  </div>
+</div>
+
+<!-- Мессенджеры -->
+<div class="overlay" id="connModal">
+  <div class="modal" style="width:min(680px,94vw)">
+    <h3>🔗 Подключение мессенджеров</h3>
+    <div class="note" style="margin:0 0 14px">
+      Вставь <b>ссылку</b> на чат/сообщество и <b>токен бота</b> — бот начнёт
+      отвечать там за тебя в выбранном режиме.
+    </div>
+
+    <div class="conn-card">
+      <div class="conn-head"><b>🟡 VK</b> <span class="pill" id="vkState">не подключён</span></div>
+      <div class="row"><label>Ссылка VK</label><input type="text" id="vkLink"
+        placeholder="https://vk.com/club123 или https://vk.com/im?sel=123"></div>
+      <div class="row"><label>Токен сообщества</label><input type="password" id="vkToken"
+        placeholder="токен из Настройки сообщества → API vK">
+        <button class="small" id="vkBtn" onclick="connect('vk')">Подключить</button></div>
+      <div class="note">Токен: Настройки сообщества → «Сообщения» → «Управление» →
+        API-функции → создать ключ доступа с правом <b>messages</b>.
+        Нужно «Сообщения от сообщества» = вкл., доступ для всех сообщений.</div>
+    </div>
+
+    <div class="conn-card">
+      <div class="conn-head"><b>✈️ Telegram</b> <span class="pill" id="tgState">не подключён</span></div>
+      <div class="row"><label>Ссылка</label><input type="text" id="tgLink"
+        placeholder="ссылка на чат (необязательно)"></div>
+      <div class="row"><label>Токен бота</label><input type="password" id="tgToken"
+        placeholder="токен от @BotFather">
+        <button class="small" id="tgBtn" onclick="connect('telegram')">Подключить</button></div>
+      <div class="note">Создай бота в @BotFather, скопируй токен. Бота нужно
+        добавить в чат/группу или начать с ним диалог — он ответит за тебя.</div>
+    </div>
+
+    <div class="conn-head" style="margin-top:16px"><b>📡 Лента событий</b>
+      <span class="note">входящие и отправленные в реальном времени</span></div>
+    <div id="events" class="events"></div>
+
+    <div class="foot">
+      <button class="ghost" onclick="hide('connModal')">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<!-- Настройки -->
+<div class="overlay" id="settingsModal">
+  <div class="modal">
+    <h3>⚙️ Настройки</h3>
+    <div class="row"><label>Режим</label>
+      <select id="setMode"><option value="auto">автоответ — пишет сразу</option>
+        <option value="draft">черновик — показывает, но не шлёт</option></select></div>
+    <div class="row"><label>LLM URL</label><input type="text" id="setLlmUrl"
+      placeholder="https://api.openai.com/v1"></div>
+    <div class="row"><label>API ключ</label><input type="password" id="setLlmKey"
+      placeholder="sk-..."></div>
+    <div class="row"><label>Модель</label><input type="text" id="setLlmModel"
+      placeholder="gpt-4o-mini"></div>
+    <div class="note">Токены мессенджеров — в меню «🔗 Мессенджеры».</div>
+    <div class="note">Без API-ключа работает локальный фолбэк-ответчик.
+      Ключ хранится локально в <b>data/settings.json</b> и уходит только к твоему
+      LLM-провайдеру. Изменения применяются сразу, перезапуск не нужен.</div>
+    <div class="foot">
+      <button class="ghost" onclick="hide('settingsModal')">Отмена</button>
+      <button onclick="saveSettings()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let cur = null, chats = {}, mode = 'auto';
+
+function toast(msg, err){
+  const t = $('toast'); t.textContent = msg; t.className = 'show' + (err?' err':'');
+  setTimeout(()=>t.className='', 2200);
+}
+function show(id){ $(id).classList.add('show'); }
+function hide(id){ $(id).classList.remove('show'); }
+
+async function api(method, path, body){
+  const opt = {method, headers:{'Content-Type':'application/json'}};
+  if(body) opt.body = JSON.stringify(body);
+  const r = await fetch(path, opt);
+  const data = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(data.error || ('HTTP '+r.status));
+  return data;
+}
+
+/* ---------- статус ---------- */
+async function status(){
+  try{
+    await api('GET','/health');
+    $('apiPill').className='pill on'; $('apiPill').textContent='API: онлайн';
+  }catch(e){
+    $('apiPill').className='pill off'; $('apiPill').textContent='API: оффлайн';
+  }
+}
+
+/* ---------- чаты ---------- */
+async function loadChats(){
+  const d = await api('GET','/chats');
+  chats = {}; d.chats.forEach(c=>chats[c.chat_id]=c);
+  const box = $('chatlist'); box.innerHTML='';
+  const ids = Object.keys(chats).sort((a,b)=>
+    (chats[b].last_ts||0)-(chats[a].last_ts||0));
+  if(!ids.length){
+    box.innerHTML='<div class="empty" style="padding:20px">Пока пусто</div>'; return;
+  }
+  ids.forEach(id=>{
+    const c = chats[id];
+    const el = document.createElement('div');
+    el.className = 'chat' + (id===cur?' sel':'');
+    el.innerHTML = `<div class="id"></div><div class="prev"></div>
+      <div class="meta">${c.count} сообщ. · ${c.mine} твоих</div>`;
+    el.querySelector('.id').textContent = id;
+    el.querySelector('.prev').textContent = c.last_text || '';
+    el.onclick = ()=>select(id);
+    box.appendChild(el);
+  });
+}
+
+function addChat(){
+  const id = $('newChatId').value.trim();
+  if(!id){ toast('Введи id чата', true); return; }
+  $('newChatId').value='';
+  select(id);
+}
+
+async function select(id){
+  cur = id;
+  $('chatTitle').textContent = '💬 ' + id;
+  await loadChats(); renderMsgs([]);
+  loadMsgs(); loadStyle();
+}
+
+async function loadMsgs(){
+  if(!cur) return;
+  const d = await api('GET','/chat/'+encodeURIComponent(cur));
+  renderMsgs(d.messages);
+}
+
+function renderMsgs(msgs){
+  const box = $('msgs'); box.innerHTML='';
+  if(!cur){
+    box.innerHTML = '<div class="empty">Чат не выбран</div>'; return;
+  }
+  if(!msgs.length){
+    box.innerHTML = '<div class="empty">Пусто. Напиши первое сообщение снизу<br>или импортируй историю.</div>';
+    return;
+  }
+  msgs.forEach(m=>{
+    const el = document.createElement('div');
+    el.className = 'm ' + (m.sender==='me'?'me':'peer');
+    const time = m.ts ? new Date(m.ts*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+    el.innerHTML = '<span class="copy" title="Копировать">⧉</span><span class="tx"></span>' +
+                   (time?`<span class="t">${time}</span>`:'');
+    el.querySelector('.tx').textContent = m.text;
+    el.querySelector('.copy').onclick = ()=>{
+      navigator.clipboard.writeText(m.text); toast('Скопировано');
+    };
+    box.appendChild(el);
+  });
+  box.scrollTop = box.scrollHeight;
+}
+
+/* ---------- отправка ---------- */
+function keySend(e){
+  if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); }
+}
+
+async function send(){
+  const text = $('inp').value.trim();
+  if(!text){ toast('Напиши сообщение', true); return; }
+  if(!cur){ toast('Сначала выбери или создай чат', true); return; }
+  $('inp').value='';
+  const btn = $('sendBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+  try{
+    const d = await api('POST','/message',{chat_id:cur, text, sender:'peer'});
+    await loadMsgs(); await loadChats();
+    if(d.mode==='draft' && d.reply){
+      toast('Черновик: ' + d.reply);
+    }
+  }catch(e){ toast(e.message, true); }
+  finally{ btn.disabled=false; btn.textContent='Ответить'; $('inp').focus(); }
+}
+
+/* ---------- стиль ---------- */
+async function loadStyle(){
+  if(!cur) return;
+  try{
+    const d = await api('GET','/style/'+encodeURIComponent(cur));
+    const box = $('styleBox');
+    if(!d.style || !d.style.length){ box.style.display='none'; return; }
+    box.style.display='block';
+    box.innerHTML = '<b>🧬 Твой стиль в этом чате</b><ul>' +
+      d.style.map(s=>'<li></li>').join('') + '</ul>' +
+      (d.samples && d.samples.length ?
+        '<b>Примеры:</b><br>' + d.samples.map(s=>'“'+esc(s)+'”').join('<br>') : '');
+    [...box.querySelectorAll('li')].forEach((li,i)=>li.textContent = d.style[i]);
+  }catch(e){}
+}
+function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+/* ---------- импорт ---------- */
+function parseImport(text){
+  const t = text.trim();
+  if(t.startsWith('[') || t.startsWith('{')){
+    const j = JSON.parse(t);
+    const arr = Array.isArray(j) ? j : (j.messages||[]);
+    return arr.map(m=>({sender:m.sender==='me'||m.sender==='self'?'me':'peer',
+                        text:String(m.text||m.message||''), ts:m.ts||0}))
+              .filter(m=>m.text);
+  }
+  const out=[];
+  for(const line of t.split('\n')){
+    const s = line.trim(); if(!s) continue;
+    let m = s.match(/^(?:Я|me|Me|Мой|Я сам)\s*[:\-–]\s*(.+)$/);
+    if(m){ out.push({sender:'me', text:m[1]}); continue; }
+    m = s.match(/^(?:Собеседник|Он|Она|Они|peer|Peer|Partner)\s*[:\-–]\s*(.+)$/i);
+    if(m){ out.push({sender:'peer', text:m[1]}); continue; }
+    out.push({sender:'peer', text:s});
+  }
+  return out;
+}
+
+async function doImport(){
+  const chat = ($('impChat').value.trim() || cur || '').trim();
+  if(!chat){ toast('Укажи чат', true); return; }
+  let msgs;
+  try{ msgs = parseImport($('impText').value); }
+  catch(e){ toast('Не удалось разобрать JSON: '+e.message, true); return; }
+  if(!msgs.length){ toast('Нет сообщений', true); return; }
+  try{
+    const d = await api('POST','/history',{chat_id:chat, messages:msgs});
+    hide('importModal'); $('impText').value=''; $('impChat').value='';
+    toast('Импортировано: '+d.imported);
+    await loadChats(); await select(chat);
+  }catch(e){ toast(e.message, true); }
+}
+
+/* ---------- чат / режим ---------- */
+async function clearChat(){
+  if(!cur) return;
+  if(!confirm('Удалить историю чата «'+cur+'»?')) return;
+  try{
+    await api('DELETE','/chat/'+encodeURIComponent(cur));
+    await loadChats(); renderMsgs([]); toast('История удалена');
+  }catch(e){ toast(e.message, true); }
+}
+
+async function setMode(v){
+  try{ await api('POST','/settings',{mode:v}); mode=v;
+    toast(v==='auto'?'Автоответ включён':'Черновики включены');
+  }catch(e){ toast(e.message, true); }
+}
+
+/* ---------- настройки ---------- */
+async function openSettings(){
+  try{
+    const d = await api('GET','/settings');
+    $('setMode').value = d.mode;
+    $('setLlmUrl').value = d.llm_url || '';
+    $('setLlmKey').value = d.llm_api_key || '';
+    $('setLlmModel').value = d.llm_model || '';
+    $('llmPill').className = 'pill ' + (d.llm_api_key?'on':'off');
+    $('llmPill').textContent = 'LLM: ' + (d.llm_api_key ? d.llm_model : 'локальный фолбэк');
+  }catch(e){ toast(e.message, true); }
+  show('settingsModal');
+}
+
+async function saveSettings(){
+  try{
+    await api('POST','/settings',{
+      mode: $('setMode').value,
+      llm_url: $('setLlmUrl').value.trim(),
+      llm_api_key: $('setLlmKey').value.trim(),
+      llm_model: $('setLlmModel').value.trim(),
+    });
+    hide('settingsModal'); toast('Сохранено ✔');
+    const d = await api('GET','/settings');
+    $('llmPill').className = 'pill ' + (d.llm_api_key?'on':'off');
+    $('llmPill').textContent = 'LLM: ' + (d.llm_api_key ? d.llm_model : 'локальный фолбэк');
+    mode = d.mode; $('modeSel').value = d.mode;
+  }catch(e){ toast(e.message, true); }
+}
+
+/* ---------- мессенджеры ---------- */
+let connTimer = null;
+
+async function loadConn(){
+  try{
+    const d = await api('GET','/events');
+    const c = d.connections || {};
+    setConnState('vk', c.vk || {});
+    setConnState('telegram', c.telegram || {});
+    if(c.vk && c.vk.link && !$('vkLink').value) $('vkLink').value = c.vk.link;
+    if(c.vk && c.vk.configured && !$('vkToken').value) $('vkToken').value = '••••••••';
+    if(c.telegram && c.telegram.link && !$('tgLink').value) $('tgLink').value = c.telegram.link;
+    if(c.telegram && c.telegram.configured && !$('tgToken').value) $('tgToken').value = '••••••••';
+    renderEvents(d.events || []);
+  }catch(e){}
+}
+
+function setConnState(name, c){
+  const el = $(name === 'vk' ? 'vkState' : 'tgState');
+  const pill = $(name === 'vk' ? 'vkPill' : 'tgPill');
+  const label = name === 'vk' ? 'VK' : 'Telegram';
+  if(c.running){
+    el.className = 'pill on'; el.textContent = 'подключён';
+    pill.className = 'pill on'; pill.textContent = label + ': онлайн';
+  } else if(c.configured){
+    el.className = 'pill off';
+    el.textContent = c.error ? 'ошибка' : 'остановлен';
+    pill.className = 'pill off';
+    pill.textContent = label + (c.error ? ': ошибка' : ': оффлайн');
+  } else {
+    el.className = 'pill'; el.textContent = 'не подключён';
+    pill.className = 'pill'; pill.textContent = label + ': не подключён';
+  }
+}
+
+function renderEvents(events){
+  const box = $('events');
+  if(!events.length){ box.innerHTML = '<div class="ev"><span class="txt">Пока тихо…</span></div>'; return; }
+  box.innerHTML = '';
+  events.slice(-60).forEach(e=>{
+    const dir = e.direction === 'in' ? 'in' : e.direction === 'out' ? 'out' :
+                e.direction === 'draft' ? 'draft' : 'error';
+    const arrow = dir === 'in' ? '←' : dir === 'out' ? '→' : dir === 'draft' ? '✏' : '⚠';
+    const el = document.createElement('div');
+    el.className = 'ev ' + dir;
+    el.innerHTML = `<span class="tm"></span><span class="src"></span>` +
+                   `<span class="txt"></span>`;
+    el.querySelector('.tm').textContent =
+      new Date(e.ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    el.querySelector('.src').textContent = `${arrow} ${e.source}`;
+    el.querySelector('.txt').textContent = `${e.chat} · ${e.text}`;
+    box.appendChild(el);
+  });
+  box.scrollTop = box.scrollHeight;
+}
+
+async function connect(name){
+  const isVk = name === 'vk';
+  const tokenEl = $(isVk ? 'vkToken' : 'tgToken');
+  const btn = $(isVk ? 'vkBtn' : 'tgBtn');
+  const token = tokenEl.value.trim();
+  if(!token || token === '••••••••'){
+    if(token === '••••••••'){ // уже сохранён — просто переподключаем
+      try{
+        const d = await api('GET','/connections');
+        if(d.connections[name] && d.connections[name].configured){ return loadConn(); }
+      }catch(e){}
+    }
+    toast('Вставь токен бота', true); return;
+  }
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+  try{
+    const d = await api('POST','/connect',{
+      messenger: name,
+      token,
+      link: $(isVk ? 'vkLink' : 'tgLink').value.trim(),
+    });
+    toast('Подключено: ' + d.who);
+    tokenEl.value = '••••••••';
+    await loadConn();
+  }catch(e){ toast(e.message, true); }
+  finally{ btn.disabled = false; btn.textContent = 'Подключить'; }
+}
+
+async function disconnect(name){
+  try{
+    await api('POST','/disconnect',{messenger:name});
+    toast('Отключено');
+    await loadConn();
+  }catch(e){ toast(e.message, true); }
+}
+
+/* ---------- init ---------- */
+(async function init(){
+  status(); setInterval(status, 5000);
+  loadConn();
+  connTimer = setInterval(()=>{ if($('connModal').classList.contains('show')) loadConn(); }, 3000);
+  try{
+    const d = await api('GET','/settings');
+    mode = d.mode; $('modeSel').value = d.mode;
+    $('llmPill').className = 'pill ' + (d.llm_api_key?'on':'off');
+    $('llmPill').textContent = 'LLM: ' + (d.llm_api_key ? d.llm_model : 'локальный фолбэк');
+  }catch(e){}
+  await loadChats();
+  const ids = Object.keys(chats);
+  if(ids.length) select(ids[0]);
+})();
+</script>
+</body>
+</html>

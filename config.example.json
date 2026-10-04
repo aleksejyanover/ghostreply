@@ -6,6 +6,10 @@
   "llm_model": "gpt-4o-mini",
   "mode": "auto",
   "telegram_token": "",
+  "telegram_link": "",
   "telegram_allowed_chats": [],
+  "vk_token": "",
+  "vk_link": "",
+  "vk_group_id": "",
   "history_window": 40
 }
